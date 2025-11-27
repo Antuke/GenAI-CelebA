@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv
+venv/
+env/
+.env
+*.pt
+# Jupyter Notebooks
+.ipynb_checkpoints/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Project Specific - GAN
+GAN/model_weights/
+GAN/output/
+GAN/image/
+
+# Project Specific - DIFFUSION
+DIFFUSION/WEIGHTS/
+
+# Project Specific - VAE
+VAE/WEIGHTS/
+VAE/RESULTS/
