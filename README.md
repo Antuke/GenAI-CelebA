@@ -41,6 +41,6 @@ For GAN and VAE, please refer to the respective notebooks (`.ipynb`) for generat
 
 
 ## Authors
-Charlotte Boucherie, https://github.com/charlotte-bl
-Massimiliano Ranauro, https://github.com/MassimilianoRanauro
-Antonio Sessa, https://github.com/Antuke
+- [Charlotte Boucherie](https://github.com/charlotte-bl)
+- [Massimiliano Ranauro](https://github.com/MassimilianoRanauro)
+- [Antonio Sessa](https://github.com/Antuke)
