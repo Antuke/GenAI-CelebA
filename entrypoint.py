@@ -13,7 +13,7 @@ app = FastAPI()
 AVAILABLE_MODELS = ["Diffusion", "Gan", "Vae"]
 
 
-
+# Other generation methodogies (trough VAE and GAN) are not supported
 class ModelManager:
     def __init__(self):
         self.diffusion_model = None
@@ -344,7 +344,7 @@ def stream_generator_json(classes, approach, cfg_lambda, faces_per_row, number_o
         data = json.dumps({"status": "generating", "image": b64_img})
         yield data + "\n"
 
-    # Final "Done" message (send the last frame again to be sure)
+    # Final "Done" message, so to display Download button
     yield json.dumps({"status": "complete", "image": b64_img}) + "\n"
 
 
@@ -352,7 +352,7 @@ def stream_generator_json(classes, approach, cfg_lambda, faces_per_row, number_o
 async def stream_feed_json(request: Request):
     form_data = await request.form()
 
-    # Extract params (same as before)
+    # Extract params
     approach = form_data.get('approach')
     cfg_lambda = int(form_data.get('cfg_lambda'))
     faces_per_row = int(form_data.get('faces_per_row'))
