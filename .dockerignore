@@ -1,0 +1,9 @@
+VAE/
+GAN/
+
+__pycache__/
+
+
+.git/
+.gitignore
+.dockerignore
