@@ -133,8 +133,8 @@ def root():
 
             <div class="form-group">
                 <label>Samples per Row</label>
-                <input type="number" name="faces_per_row" value="5" min="1" max="10">
-                <div class="hint">Min 1, Max 10</div>
+                <input type="number" name="faces_per_row" value="5" min="1" max="5">
+                <div class="hint">Min 1, Max 5</div>
             </div>
 
             <div class="form-group">
@@ -357,6 +357,9 @@ async def stream_feed_json(request: Request):
     cfg_lambda = int(form_data.get('cfg_lambda'))
     faces_per_row = int(form_data.get('faces_per_row'))
     number_of_row = int(form_data.get('number_of_row'))
+
+    faces_per_row = max(1, min(faces_per_row, 5))
+
 
     classes = {}
     for i in range(number_of_row):
