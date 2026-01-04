@@ -1,0 +1,20 @@
+version: '3.8'
+
+services:
+  genai-celeba:
+    build: .
+    ports:
+      - "8000:8000"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [ gpu ]
+    volumes:
+      - .:/app
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+    command: >
+          /bin/bash -c "echo 'Server is starting... The first generation will take time to start! The application will be available at localhost:8000' && uvicorn entrypoint:app --port 8000 --host 0.0.0.0"

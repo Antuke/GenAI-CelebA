@@ -26,7 +26,7 @@ class SAM(nn.Module):
 
         concat = torch.cat((max_out, avg_out), dim=1) # [b, 2, h, w]
         output = self.conv(concat) # [b, 1, h, w]
-        output = self.sigmoid(output) * x  
+        output = self.sigmoid(output) * x
         return output
 
 
@@ -56,31 +56,31 @@ class CAM(nn.Module):
 
         b, c, _, _ = x.size()
 
-        # Given the max value for each channel, the MLP learns a 1-d vector of c dimension 
+        # Given the max value for each channel, the MLP learns a 1-d vector of c dimension
         # to reweight each channel by multiplying it by a learned value between 0 and 1
         linear_max = self.linear(max_pool.view(b, c)).view(b, c, 1, 1)
 
-        # Given the avg value for each channel, the MLP learns a 1-d vector of c dimension 
+        # Given the avg value for each channel, the MLP learns a 1-d vector of c dimension
         # to reweight each channel by multiplying it by a learned value between 0 and 1
         linear_avg = self.linear(avg_pool.view(b, c)).view(b, c, 1, 1)
 
 
 
         output = linear_max + linear_avg
-        return output * x  # pytorch broadcasting allows this operation 
+        return output * x  # pytorch broadcasting allows this operation
 
 
 class CBAM(nn.Module):
     """ Convolutional Block Attention Module (CBAM), as presented in https://arxiv.org/pdf/1807.06521v2
-    Given a Feature Map F, of size CxHxW, CBAM computes 
+    Given a Feature Map F, of size CxHxW, CBAM computes
     F' = M_C(F) x F
     F'' = M_S(F') x F'
 
     M_C(F), is the output of the Channel attention module, it's a Cx1x1 vector
     M_S(F''), is the output of the Spatial attention module, it's a 1xHxW matrix
-    
+
     CBAM allows the neural network to focus on the more important part of a feature map of an image,
-    by smartly reweighting 
+    by smartly reweighting
     """
     def __init__(self, channels, r=4):
         super(CBAM, self).__init__()
@@ -95,7 +95,7 @@ class CBAM(nn.Module):
         return sam_output + x # skip connection, the block will learn only small refinement
 
 class TimeEncoding:
-    def __init__(self, L, dim, device=device): # Original device usage
+    def __init__(self, L = 1000, dim = 256, device=device): # Original device usage
         self.L = L
         self.dim = dim
         dim2 = dim // 2
@@ -127,7 +127,7 @@ class Upsample(nn.Module):
         super().__init__()
         self.in_ch = in_ch
         self.layer = nn.Conv2d(in_ch, in_ch * 4, kernel_size = 3, stride = 1, padding = 1)
-        self.pixel_shuffle1 = nn.PixelShuffle(2) 
+        self.pixel_shuffle1 = nn.PixelShuffle(2)
         self.layer2 = nn.Conv2d(in_ch, out_ch, kernel_size = 3, stride = 1, padding = 1)
     def forward(self, x:torch.Tensor) -> torch.Tensor:
         x = self.layer(x)
@@ -135,7 +135,7 @@ class Upsample(nn.Module):
         x = self.layer2(x)
 
         return x
-    
+
 class Downsample(nn.Module):
     """
     Input C_inxHxW -> C_out x (H//2) x (W//2)
@@ -149,7 +149,7 @@ class Downsample(nn.Module):
 
     def forward(self, x:torch.Tensor) -> torch.Tensor:
         return self.layer(x)
-    
+
 
 class ResidualBlock(nn.Module):
     """
@@ -181,19 +181,19 @@ class ResidualBlock(nn.Module):
             nn.GELU(),
             nn.Linear(cdim, out_ch * 2),
         )
-        
+
         self.block_2 = nn.Sequential(
             nn.GroupNorm(32, out_ch),
             nn.GELU(),
             nn.Dropout(p = self.droprate),
             nn.Conv2d(out_ch, out_ch, kernel_size = 3, stride = 1, padding = 1),
-            
+
         )
         if in_ch != out_ch:
             self.residual = nn.Conv2d(in_ch, out_ch, kernel_size = 1, stride = 1, padding = 0)
         else:
             self.residual = nn.Identity()
-    
+
     def forward(self, x:torch.Tensor, temb:torch.Tensor, cemb:torch.Tensor) -> torch.Tensor:
         latent = self.block_1(x)
 
@@ -207,10 +207,10 @@ class ResidualBlock(nn.Module):
         # chunk divides the tensor in two along the channel dimension
         t_scale, t_shift = torch.chunk(t_params, 2, dim=1) # [batch_size, C , 1, 1] & [batch_size, C , 1, 1]
 
-        
+
         c_params = self.c_film(cemb).unsqueeze(-1).unsqueeze(-1)
         c_scale, c_shift = torch.chunk(c_params, 2, dim=1)
-        
+
 
         # the +1 to the scale parameter is to ensure better inizialitazion
         # (if the scalarer param would get initiliazed to a near 0 value it would considerably hinder training)
@@ -218,18 +218,18 @@ class ResidualBlock(nn.Module):
         latent = latent * (1 + t_scale) + t_shift # pytorch broadcasting is able to correctly do this operation
         latent = latent * (1 + c_scale) + c_shift # even if there is a shape mismatch
 
-        
+
         latent = self.block_2(latent)
 
         latent += self.residual(x)
         return latent
-    
+
 class CFGDenoiser(nn.Module):
     def __init__(self, in_ch=3, base_ch = 64, cdim = 3, embdim = 256):
         super().__init__()
         self.in_ch = 3
         self.base_ch = base_ch
-        self.length = 3 
+        self.length = 3
         self.embdim = embdim
 
 
@@ -249,10 +249,10 @@ class CFGDenoiser(nn.Module):
         self.in_conv = nn.Conv2d(self.in_ch, self.base_ch, kernel_size=3, padding=1)
         self.cbam0 = CBAM(self.base_ch)
         curr_ch = self.base_ch
-        
+
         # --------- 4 downsampling block ------------- #
 
-        self.res1d = ResidualBlock(curr_ch, curr_ch, embdim, embdim, 0.1) 
+        self.res1d = ResidualBlock(curr_ch, curr_ch, embdim, embdim, 0.1)
         self.d1 = Downsample(curr_ch, curr_ch * 2) # b_ch*2 x 32 x 32
         curr_ch *= 2
 
@@ -268,7 +268,7 @@ class CFGDenoiser(nn.Module):
         self.d4 = Downsample(curr_ch, curr_ch * 2) # b_ch*16 x 4 x 4
         curr_ch *= 2
         # --------- Bottleneck ------------ #
-        
+
         self.bottleneck1 = ResidualBlock(curr_ch, curr_ch, embdim, embdim, 0.1)
         self.cbam1 = CBAM(curr_ch)
         self.bottleneck2 = ResidualBlock(curr_ch, curr_ch, embdim, embdim, 0.1)
@@ -278,25 +278,25 @@ class CFGDenoiser(nn.Module):
 
         # input (1024*2) x 8 x 8
         self.res1u = ResidualBlock(curr_ch * 2, curr_ch, embdim, embdim, 0.1)
-        self.u1 = Upsample(curr_ch, curr_ch // 2) 
+        self.u1 = Upsample(curr_ch, curr_ch // 2)
         curr_ch //= 2
 
         # input (512*2) x 16 x 16
         self.res2u = ResidualBlock(curr_ch * 2, curr_ch, embdim, embdim, 0.1)
-        self.u2 = Upsample(curr_ch, curr_ch // 2) 
+        self.u2 = Upsample(curr_ch, curr_ch // 2)
         curr_ch //= 2
 
         # input (256*2) x 32 x 32
         self.res3u = ResidualBlock(curr_ch * 2, curr_ch, embdim, embdim, 0.1)
-        self.u3 = Upsample(curr_ch, curr_ch // 2) 
+        self.u3 = Upsample(curr_ch, curr_ch // 2)
         curr_ch //= 2
 
         # input (128*2) x 64 x 64
         self.res4u = ResidualBlock(curr_ch * 2, curr_ch, embdim, embdim, 0.1)
-        self.u4 = Upsample(curr_ch, curr_ch // 2) 
+        self.u4 = Upsample(curr_ch, curr_ch // 2)
         self.cbam3 = CBAM(curr_ch)
         curr_ch //= 2
-        
+
         # ---------  output ------------- #
 
 
@@ -324,7 +324,7 @@ class CFGDenoiser(nn.Module):
                 # Where the mask is true, set the value of c equal to zero, otherwise keep them as they are
                 c = torch.where(mask, zeros_for_uncond, c)
 
-        
+
 
         x0 = self.in_conv(x)
         # --- encoding --- #
@@ -351,7 +351,7 @@ class CFGDenoiser(nn.Module):
         y = torch.cat([xb2a, x4d], dim=1)
         y = self.res1u(y, t, c)
         y = self.u1(y)
-        
+
         y = torch.cat([y, x3d], dim=1)
         y = self.res2u(y, t, c)
         y = self.u2(y)
@@ -370,13 +370,13 @@ class CFGDenoiser(nn.Module):
 
     def get_name(self):
         return 'res_cbam_deeper'
-        
+
 def run_test(img_size, T=1000, time_emb_dim=256, batch_size=4, c_in_dim_test=3, base_channels_test=32): # Added base_channels_test
     time_encoder = TimeEncoding(T, time_emb_dim, device=device)
     t_indices = torch.randint(low=0, high=T, size=(batch_size,), device=device)
     t = time_encoder[t_indices]
     c = torch.zeros((batch_size,c_in_dim_test), dtype=torch.float32, device=device)
-    
+
     print(f"\n--- Testing Image Size: {img_size}x{img_size},  Base Channels: {base_channels_test} ---")
 
     synth_3c = torch.randn((batch_size, 3, img_size, img_size), device=device)
@@ -391,16 +391,16 @@ def run_test(img_size, T=1000, time_emb_dim=256, batch_size=4, c_in_dim_test=3, 
         print(f"  3C Test Failed: {e}")
         raise
 
-   
+
 
     print(f"--- Tests passed for image size {img_size}x{img_size} ---")
 
 
 def run_tests():
-    test_img_sizes = [64] 
+    test_img_sizes = [64]
     test_time_dim = 256
     test_c_in_dim = 3
-    test_base_channels = 64 
+    test_base_channels = 64
 
     for size in test_img_sizes:
         run_test(img_size=size, time_emb_dim=test_time_dim, c_in_dim_test=test_c_in_dim, base_channels_test=test_base_channels)

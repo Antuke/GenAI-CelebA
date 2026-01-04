@@ -35,6 +35,28 @@ python inference.py --method ddpm --rows 1 --cols 4 --name my_sample
 - `--cfg_lambda`: Guidance scale (default: `3.0`)
 - `--device`: `cuda` or `cpu`
 
+### Docker Support
+
+You can also run the application using Docker. This provides a consistent environment and an easy-to-use browser interface for sample generation.
+
+**Prerequisites:**
+- [Docker](https://www.docker.com/get-started) installed on your machine.
+- [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html) installed (required for GPU acceleration).
+
+**Running the Application:**
+
+1. Navigate to the project root directory.
+2. Run the following command:
+
+```bash
+docker compose up
+```
+
+The first time you run this, it will build the Docker image, which may take some time.
+
+Once the server is running, you can access the application interface at:
+[http://localhost:8000](http://localhost:8000)
+
 ### GAN & VAE
 
 For GAN and VAE, please refer to the respective notebooks (`.ipynb`) for generation and inference examples.
