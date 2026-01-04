@@ -1,16 +1,52 @@
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Query
 from fastapi.responses import HTMLResponse, StreamingResponse
-import torch
+from fastapi.staticfiles import StaticFiles
+
+from torchvision import utils
 import gc
 import json
-
-
+import torch
+import redis_db as db
+import os
+import uuid
+from typing import Optional
 from DIFFUSION.generation_functions import load_checkpoint, generate_sample, generate_sample_ddim, tensor_to_base64
 from DIFFUSION.model import CFGDenoiser, TimeEncoding
 
 app = FastAPI()
+db.init_db()
+SAVE_DIR = 'FACES'
+os.makedirs(name=SAVE_DIR,exist_ok=True)
+AVAILABLE_MODELS = ["Diffusion"]
 
-AVAILABLE_MODELS = ["Diffusion", "Gan", "Vae"]
+app.mount(f"/{SAVE_DIR}", StaticFiles(directory=SAVE_DIR), name="images")
+
+
+def save_images(batch_tensor, labels, approach):
+    """Saves the individual images contained in the batch tensors on filesystem,
+    and saves the path and meta-data on redis"""
+    batch_size = batch_tensor.shape[0]
+
+    for i in range(batch_size):
+        img_tensor = batch_tensor[i]
+
+        l_vec = labels[i].cpu().int().numpy()
+        gender = int(l_vec[0])
+        glasses = int(l_vec[1])
+        beard = int(l_vec[2])
+        class_type = str(gender) + str(glasses) + str(beard)
+        filename = f"{uuid.uuid4().hex}_{class_type}_{approach}.jpg"
+        filepath = os.path.join(SAVE_DIR, filename)
+
+        utils.save_image(img_tensor, filepath, normalize=True, value_range=(-1, 1))
+
+
+        db_path = f"/{SAVE_DIR}/{filename}"
+        db.insert_face(db_path, gender, beard, glasses, approach)
+
+
+
+
 
 
 # Other generation methodogies (trough VAE and GAN) are not supported
@@ -113,8 +149,9 @@ def root():
     </head>
     <body>
 
+
     <div class="container">
-        <h2>Generation Settings</h2>
+        <h2>Generation Settings <a href="/gallery" class="home-link"> Go to gallery &rarr;</a> </h2>
 
         <form id="gen-form">
             <div class="form-group">
@@ -339,12 +376,13 @@ def stream_generator_json(classes, approach, cfg_lambda, faces_per_row, number_o
         generator = generate_sample(den_net, time_encoder, noise_size, labels, cfg_lambda) #ddpm
 
     for step_tensor in generator:
-        b64_img = tensor_to_base64(step_tensor)
+        last_tensor = step_tensor
+        b64_img = tensor_to_base64(last_tensor)
         # Yield a JSON line
         data = json.dumps({"status": "generating", "image": b64_img})
         yield data + "\n"
 
-    # Final "Done" message, so to display Download button
+    save_images(last_tensor, labels, approach)
     yield json.dumps({"status": "complete", "image": b64_img}) + "\n"
 
 
@@ -371,3 +409,127 @@ async def stream_feed_json(request: Request):
         stream_generator_json(classes, approach, cfg_lambda, faces_per_row, number_of_row),
         media_type="application/x-ndjson"
     )
+
+
+
+
+
+
+@app.get("/gallery", response_class=HTMLResponse)
+def gallery(
+    gender: Optional[str] = Query(None, description="0: Female, 1: Male"),
+    beard: Optional[str] = Query(None, description="0: No Beard, 1: Beard"),
+    glasses: Optional[str] = Query(None, description="0: No Glasses, 1: Glasses"),
+    approach: Optional[str] = Query(None, description="ddpm or ddim")
+):
+    """
+    Displays a gallery of generated images with filtering options.
+    Accepts strings to handle empty form values (e.g., ?gender=) gracefully.
+    """
+
+    gender_int = int(gender) if gender in ['0', '1'] else None
+    beard_int = int(beard) if beard in ['0', '1'] else None
+    glasses_int = int(glasses) if glasses in ['0', '1'] else None
+
+    if approach is not None and not approach.strip():
+        approach = None
+
+    faces = db.get_filtered_faces(
+        gender=gender_int,
+        beard=beard_int,
+        glasses=glasses_int,
+        approach=approach,
+        n_to_return=50
+    )
+
+    # Helper to create option tags
+    def mk_opt(val, curr, label):
+        sel = "selected" if str(val) == str(curr) else ""
+        return f'<option value="{val}" {sel}>{label}</option>'
+
+    # Build HTML for gallery
+    images_html = ""
+    for face in faces:
+        # face['path'] comes from DB as "/FACES/filename.jpg", which matches our mount
+        # Metadata
+        meta = []
+        if face['gender'] == 1: meta.append("Male")
+        else: meta.append("Female")
+        if face['glasses'] == 1: meta.append("Glasses")
+        if face['beard'] == 1: meta.append("Beard")
+
+        meta_str = ", ".join(meta)
+
+        images_html += f"""
+        <div class="gallery-item">
+            <img src="{face['path']}" loading="lazy" alt="{meta_str}">
+            <div class="meta">
+                <strong>{face['approach'].upper()}</strong><br>
+                <small>{meta_str}</small>
+            </div>
+        </div>
+        """
+
+    html_content = f"""
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <title>Generated Gallery</title>
+        <style>
+            :root {{ --primary: #2563eb; --bg: #f8fafc; --card: #ffffff; }}
+            body {{ font-family: system-ui, sans-serif; background: var(--bg); padding: 2rem; }}
+            .header {{ display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem; }}
+            h1 {{ margin: 0; color: var(--primary); }}
+            .controls {{ background: var(--card); padding: 1rem; border-radius: 8px; display: flex; gap: 1rem; flex-wrap: wrap; box-shadow: 0 2px 4px rgb(0 0 0 / 0.1); margin-bottom: 2rem; }}
+            select, button {{ padding: 0.5rem; border-radius: 4px; border: 1px solid #ccc; }}
+            button {{ background: var(--primary); color: white; border: none; cursor: pointer; font-weight: bold; }}
+
+            .grid {{ display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 1rem; }}
+            .gallery-item {{ background: var(--card); border-radius: 8px; overflow: hidden; box-shadow: 0 2px 4px rgb(0 0 0 / 0.1); transition: transform 0.2s; }}
+            .gallery-item:hover {{ transform: translateY(-4px); }}
+            .gallery-item img {{ width: 100%; height: auto; display: block; }}
+            .meta {{ padding: 0.5rem; font-size: 0.8rem; text-align: center; color: #475569; }}
+            .home-link {{ text-decoration: none; color: var(--primary); font-weight: bold; }}
+        </style>
+    </head>
+    <body>
+        <div class="header">
+            <h1>Gallery</h1>
+            <a href="/" class="home-link">&larr; Back to Generator</a>
+        </div>
+
+        <form method="get" class="controls">
+            <select name="gender">
+                <option value="">Gender (Any)</option>
+                {mk_opt(1, gender, 'Male')}
+                {mk_opt(0, gender, 'Female')}
+            </select>
+            <select name="beard">
+                <option value="">Beard (Any)</option>
+                {mk_opt(1, beard, 'Yes')}
+                {mk_opt(0, beard, 'No')}
+            </select>
+            <select name="glasses">
+                <option value="">Glasses (Any)</option>
+                {mk_opt(1, glasses, 'Yes')}
+                {mk_opt(0, glasses, 'No')}
+            </select>
+            <select name="approach">
+                <option value="">Approach (Any)</option>
+                {mk_opt('ddpm', approach, 'DDPM')}
+                {mk_opt('ddim', approach, 'DDIM')}
+            </select>
+            <button type="submit">Filter</button>
+            <a href="/gallery" style="align-self:center; margin-left: auto; font-size: 0.9rem;">Reset</a>
+        </form>
+
+        <div class="grid">
+            {images_html}
+        </div>
+
+        { "<p style='text-align:center; color: #666;'>No images found matching these criteria.</p>" if not faces else "" }
+    </body>
+    </html>
+    """
+    return HTMLResponse(content=html_content)

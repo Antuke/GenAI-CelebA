@@ -17,4 +17,14 @@ services:
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
     command: >
-          /bin/bash -c "echo 'Server is starting... The first generation will take time to start! The application will be available at localhost:8000' && uvicorn entrypoint:app --port 8000 --host 0.0.0.0"
+      /bin/bash -c "echo 'Server is starting... The first generation will take time to start! The application will be available at localhost:8000' && uvicorn entrypoint:app --port 8000 --host 0.0.0.0"
+
+  redis:
+    image: redis:8.4.0-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
+volumes:
+  redis_data:

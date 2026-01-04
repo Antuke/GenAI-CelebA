@@ -86,7 +86,7 @@ def tensor_to_bytes(z):
 
 
 def generate_sample_ddim(
-    den_net: CFGDenoiser, time_encoder: TimeEncoding, noise_size, labels, cfg_lambda=3, verbose=True
+    den_net: CFGDenoiser, time_encoder: TimeEncoding, noise_size, labels, cfg_lambda=3, verbose=False
 ):
     assert tau is not None, "Tau schedule is not initialized"
     assert beta is not None, "Beta schedule is not initialized"
@@ -118,7 +118,9 @@ def generate_sample_ddim(
     normal_indx = torch.nonzero(normal_mask).squeeze(-1)
 
     time_steps = range(N - 1)
-    time_steps = tqdm(time_steps, desc="Denoising DDIM", unit="step")
+
+    if verbose:
+        time_steps = tqdm(time_steps, desc="Denoising DDIM", unit="step")
 
     for t in time_steps:
         t_indices = torch.ones((num_samples,), device=device, dtype=torch.int) * tau[t]
@@ -226,7 +228,7 @@ def generate_sample_ddim(
 
 
 def generate_sample(
-    den_net: CFGDenoiser, time_encoder: TimeEncoding, noise_size, labels, cfg_lambda=3, verbose=True
+    den_net: CFGDenoiser, time_encoder: TimeEncoding, noise_size, labels, cfg_lambda=3, verbose=False
 ):
     assert tau is not None, "Tau schedule is not initialized"
     assert beta is not None, "Beta schedule is not initialized"
