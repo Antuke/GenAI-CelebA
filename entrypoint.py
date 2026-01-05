@@ -25,10 +25,13 @@ AVAILABLE_MODELS = ["Diffusion"]
 app.mount(f"/{SAVE_DIR}", StaticFiles(directory=SAVE_DIR), name="images")
 
 
-def save_images(batch_tensor, labels, approach):
+def save_images(batch_tensor, labels, approach, cfg_lambda):
     """Saves the individual images contained in the batch tensors on filesystem,
     and saves the path and meta-data on redis"""
     batch_size = batch_tensor.shape[0]
+
+    def to_string_cfg(cfg:int):
+        return f"pos{cfg}" if cfg >= 0 else f"neg{-cfg}"
 
     for i in range(batch_size):
         img_tensor = batch_tensor[i]
@@ -38,14 +41,14 @@ def save_images(batch_tensor, labels, approach):
         glasses = int(l_vec[1])
         beard = int(l_vec[2])
         class_type = str(gender) + str(glasses) + str(beard)
-        filename = f"{uuid.uuid4().hex}_{class_type}_{approach}.jpg"
+        filename = f"{uuid.uuid4().hex}_{class_type}_{approach}_{to_string_cfg(cfg_lambda)}.jpg"
         filepath = os.path.join(SAVE_DIR, filename)
 
         utils.save_image(img_tensor, filepath, normalize=True, value_range=(-1, 1))
 
 
         db_path = f"/{SAVE_DIR}/{filename}"
-        db.insert_face(db_path, gender, beard, glasses, approach)
+        db.insert_face(db_path, gender, beard, glasses, approach, cfg_lambda)
 
 
 
@@ -388,7 +391,7 @@ def stream_generator_json(classes, approach, cfg_lambda, faces_per_row, number_o
         data = json.dumps({"status": "generating", "image": b64_img})
         yield data + "\n"
 
-    save_images(last_tensor, labels, approach)
+    save_images(last_tensor, labels, approach, cfg_lambda)
     yield json.dumps({"status": "complete", "image": b64_img}) + "\n"
 
 
@@ -462,6 +465,11 @@ def gallery(
         sel = "selected" if str(val) == str(curr) else ""
         return f'<option value="{val}" {sel}>{label}</option>'
 
+    def to_string_cfg(cfg_lambda:int):
+        if cfg_lambda == 0:
+            return " 0"
+        return f'+{cfg_lambda}' if cfg_lambda > 0 else f'{cfg_lambda}'
+
     # Build HTML for gallery
     images_html = ""
     for face in faces:
@@ -483,7 +491,7 @@ def gallery(
         <div class="gallery-item" id="card-{face['id']}">
             <img src="{face['path']}" loading="lazy" alt="{meta_str}">
             <div class="meta">
-                <strong>{face['approach'].upper()}</strong>
+                <strong>{face['approach'].upper()} {to_string_cfg(face['cfg_lambda'])}</strong>
                 <small>{meta_str}</small>
                 <div class="actions">
                     <a href="{face['path']}" download="{face['id']}" class="btn download-btn">Download</a>

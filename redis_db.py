@@ -16,7 +16,7 @@ def init_db():
     except redis.ConnectionError:
         print(f"Error: Could not connect to Redis at {REDIS_HOST}")
 
-def insert_face(path, gender, beard, glasses, approach, timestamp=None):
+def insert_face(path, gender, beard, glasses, approach, cfg_lambda, timestamp=None):
     """Insert face path and metadata into local redis instance"""
     face_id = os.path.basename(path)
 
@@ -30,6 +30,7 @@ def insert_face(path, gender, beard, glasses, approach, timestamp=None):
         "beard": beard,
         "glasses": glasses,
         "approach": approach,
+        "cfg_lambda": cfg_lambda,
         "timestamp": timestamp
     }
     r.hset(key, mapping=mapping)
@@ -113,6 +114,7 @@ def get_filtered_faces(gender=None, beard=None, glasses=None, approach=None, n_t
                 "beard": int(data.get("beard")),
                 "glasses": int(data.get("glasses")),
                 "approach": data.get("approach"),
+                "cfg_lambda": int(data.get("cfg_lambda")),
                 "timestamp": float(data.get("timestamp"))
             })
 
