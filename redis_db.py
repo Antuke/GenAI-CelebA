@@ -2,8 +2,10 @@ import redis
 import os
 import time
 
-REDIS_HOST = "localhost"
-REDIS_PORT = 6379
+REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
+REDIS_PORT = int(os.getenv("REDIS_PORT", 6379))
+SAVE_DIR = "FACES"
+
 r = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True)
 
 def init_db():
@@ -14,12 +16,13 @@ def init_db():
     except redis.ConnectionError:
         print(f"Error: Could not connect to Redis at {REDIS_HOST}")
 
-def insert_face(path, gender, beard, glasses, approach):
+def insert_face(path, gender, beard, glasses, approach, timestamp=None):
     """Insert face path and metadata into local redis instance"""
     face_id = os.path.basename(path)
 
     key = f"face:{face_id}"
-    timestamp = time.time()
+    if timestamp is None:
+        timestamp = time.time()
 
     mapping = {
         "path": path,
@@ -39,6 +42,40 @@ def insert_face(path, gender, beard, glasses, approach):
 
     # Timeline (Sorted Set) for chronological order
     r.zadd("idx:timeline", {face_id: timestamp})
+
+def delete_face(face_id):
+    """Remove a face and its indices from Redis and delets the .jpg from filesystem."""
+    key = f"face:{face_id}"
+    data = r.hgetall(key)
+
+    if not data:
+        return
+
+    gender = data.get("gender")
+    beard = data.get("beard")
+    glasses = data.get("glasses")
+    approach = data.get("approach")
+
+    # Remove from indices
+    if gender is not None: r.srem(f"idx:gender:{gender}", face_id)
+    if beard is not None: r.srem(f"idx:beard:{beard}", face_id)
+    if glasses is not None: r.srem(f"idx:glasses:{glasses}", face_id)
+    if approach is not None: r.srem(f"idx:approach:{approach}", face_id)
+
+    # Remove from timeline
+    r.zrem("idx:timeline", face_id)
+
+    # Remove the hash
+    r.delete(key)
+
+    if os.path.exists(f"{SAVE_DIR}/{face_id}"):
+        os.remove(f"{SAVE_DIR}/{face_id}")
+
+    return True
+
+def get_all_face_ids():
+    """Retrieve all face IDs (filenames) currently indexed."""
+    return r.zrange("idx:timeline", 0, -1)
 
 def get_filtered_faces(gender=None, beard=None, glasses=None, approach=None, n_to_return=20):
     sets_to_intersect = []
@@ -60,10 +97,7 @@ def get_filtered_faces(gender=None, beard=None, glasses=None, approach=None, n_t
         final_ids = r.zrevrange("idx:timeline", 0, -1)
     else:
         # Intersect the filter sets to find matches
-        # SINTER returns IDs present in ALL provided sets
         matches = r.sinter(sets_to_intersect)
-        # Sort them by checking their score in the timeline ZSET
-        # Should be changed
         final_ids = sorted(list(matches), key=lambda x: r.zscore("idx:timeline", x) or 0, reverse=True)
 
     # Take the n_to_return latest generated
@@ -83,6 +117,54 @@ def get_filtered_faces(gender=None, beard=None, glasses=None, approach=None, n_t
             })
 
     return results
+
+
+
+
+
+def sync_filesystem_with_db():
+    """Scans FACES folder and syncs state with Redis."""
+    if not os.path.exists(SAVE_DIR):
+        return
+
+    print("Syncing FACES folder with Redis...")
+
+    on_disk = set([f for f in os.listdir(SAVE_DIR) if f.endswith(".jpg")])
+
+    in_db = set(get_all_face_ids())
+
+    to_add = on_disk - in_db
+    for filename in to_add:
+        try:
+            name_parts = filename.replace(".jpg", "").split("_")
+            if len(name_parts) != 3:
+                continue
+
+            _, class_code, approach = name_parts
+
+            if len(class_code) != 3:
+                 continue
+
+            gender = int(class_code[0])
+            glasses = int(class_code[1])
+            beard = int(class_code[2])
+
+            full_path = f"/{SAVE_DIR}/{filename}"
+            file_ts = os.path.getmtime(os.path.join(SAVE_DIR, filename))
+
+            insert_face(full_path, gender, beard, glasses, approach, timestamp=file_ts)
+            print(f"Synced: Added {filename}")
+
+        except Exception as e:
+            print(f"Error syncing file {filename}: {e}")
+
+    to_remove = in_db - on_disk
+    for filename in to_remove:
+        delete_face(filename)
+        print(f"Synced: Removed {filename}")
+
+    print("Sync complete.")
+
 
 
 if __name__ == '__main__':

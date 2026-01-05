@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Request, Query
+from fastapi import FastAPI, Request, Query, status
 from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -13,8 +13,11 @@ from typing import Optional
 from DIFFUSION.generation_functions import load_checkpoint, generate_sample, generate_sample_ddim, tensor_to_base64
 from DIFFUSION.model import CFGDenoiser, TimeEncoding
 
-app = FastAPI()
 db.init_db()
+db.sync_filesystem_with_db()
+app = FastAPI()
+
+
 SAVE_DIR = 'FACES'
 os.makedirs(name=SAVE_DIR,exist_ok=True)
 AVAILABLE_MODELS = ["Diffusion"]
@@ -46,48 +49,51 @@ def save_images(batch_tensor, labels, approach):
 
 
 
-
-
-
-# Other generation methodogies (trough VAE and GAN) are not supported
 class ModelManager:
     def __init__(self):
-        self.diffusion_model = None
+        self.model = None
         self.time_encoder = None
-        self.vae_model = None
-        self.gan_model = None
+        self.model_type = None  # Tracks the type ('diffusion', 'vae', 'gan')
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     def _unload_others(self, keep: str):
-        """Helper to clear VRAM of unused models."""
-        cleared = False
-        if keep != 'diffusion' and self.diffusion_model is not None:
-            del self.diffusion_model
+        """
+        Clears VRAM if the requested model type differs from the currently loaded one.
+        """
+        # Return immediately if the correct model is already loaded to save time
+        if self.model is not None and self.model_type == keep:
+            return
+
+        # If a mismatched model exists, delete it to free up VRAM
+        if self.model is not None:
+            del self.model
+            self.model = None
+
+        # Clean up the time encoder if we are switching contexts
+        if self.time_encoder is not None:
             del self.time_encoder
-            self.diffusion_model = None
             self.time_encoder = None
-            cleared = True
-        if keep != 'vae' and self.vae_model is not None:
-            del self.vae_model
-            self.vae_model = None
-            cleared = True
-        if keep != 'gan' and self.gan_model is not None:
-            del self.gan_model
-            self.gan_model = None
-            cleared = True
-        if cleared:
-            gc.collect()
-            torch.cuda.empty_cache()
+
+        self.model_type = None
+
+        # Force garbage collection to ensure VRAM is actually released
+        gc.collect()
+        torch.cuda.empty_cache()
 
     def get_diffusion(self) -> tuple[CFGDenoiser, TimeEncoding]:
-        if self.diffusion_model is None or self.time_encoder is None:
-            print('Initializing Diffusion...')
-            self._unload_others(keep='diffusion')
-            self.diffusion_model = CFGDenoiser().to(self.device)
-            self.time_encoder = TimeEncoding(L=1000, dim=256, device=self.device)
-            load_checkpoint(denoiser=self.diffusion_model, path="./DIFFUSION/diffusion.pt")
+        # Ensure we unload any model that isn't 'diffusion'
+        self._unload_others(keep='diffusion')
 
-        return self.diffusion_model, self.time_encoder
+        # Initialize only if the model is missing (meaning it was unloaded or never loaded)
+        if self.model is None:
+            print('Initializing Diffusion...')
+            self.model = CFGDenoiser().to(self.device)
+            self.time_encoder = TimeEncoding(L=1000, dim=256, device=self.device)
+
+            load_checkpoint(denoiser=self.model, path="./DIFFUSION/diffusion.pt")
+            self.model_type = 'diffusion'
+
+        return self.model, self.time_encoder
 
 MODEL_MANAGER = ModelManager()
 
@@ -412,7 +418,16 @@ async def stream_feed_json(request: Request):
 
 
 
+@app.delete("/gallery/{face_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_face(face_id: str):
+    """
+    Deletes a face from Redis and filesystem.
+    Returns 204 No Content on success.
+    """
+    db.delete_face(face_id)
 
+    # Return None for 204 status
+    return None
 
 
 @app.get("/gallery", response_class=HTMLResponse)
@@ -453,19 +468,27 @@ def gallery(
         # face['path'] comes from DB as "/FACES/filename.jpg", which matches our mount
         # Metadata
         meta = []
-        if face['gender'] == 1: meta.append("Male")
-        else: meta.append("Female")
-        if face['glasses'] == 1: meta.append("Glasses")
-        if face['beard'] == 1: meta.append("Beard")
+        if face['gender'] == 1:
+            meta.append("Male")
+        else:
+            meta.append("Female")
+        if face['glasses'] == 1:
+            meta.append("Glasses")
+        if face['beard'] == 1:
+            meta.append("Beard")
 
         meta_str = ", ".join(meta)
 
         images_html += f"""
-        <div class="gallery-item">
+        <div class="gallery-item" id="card-{face['id']}">
             <img src="{face['path']}" loading="lazy" alt="{meta_str}">
             <div class="meta">
-                <strong>{face['approach'].upper()}</strong><br>
+                <strong>{face['approach'].upper()}</strong>
                 <small>{meta_str}</small>
+                <div class="actions">
+                    <a href="{face['path']}" download="{face['id']}" class="btn download-btn">Download</a>
+                    <button class="btn delete-btn" onclick="deleteFace('{face['id']}')">Delete</button>
+                </div>
             </div>
         </div>
         """
@@ -477,20 +500,45 @@ def gallery(
         <meta charset="UTF-8">
         <title>Generated Gallery</title>
         <style>
-            :root {{ --primary: #2563eb; --bg: #f8fafc; --card: #ffffff; }}
+            :root {{ --primary: #2563eb; --bg: #f8fafc; --card: #ffffff; --danger: #ef4444; --success: #10b981; }}
             body {{ font-family: system-ui, sans-serif; background: var(--bg); padding: 2rem; }}
             .header {{ display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem; }}
             h1 {{ margin: 0; color: var(--primary); }}
             .controls {{ background: var(--card); padding: 1rem; border-radius: 8px; display: flex; gap: 1rem; flex-wrap: wrap; box-shadow: 0 2px 4px rgb(0 0 0 / 0.1); margin-bottom: 2rem; }}
-            select, button {{ padding: 0.5rem; border-radius: 4px; border: 1px solid #ccc; }}
-            button {{ background: var(--primary); color: white; border: none; cursor: pointer; font-weight: bold; }}
+            select, button.filter-btn {{ padding: 0.5rem; border-radius: 4px; border: 1px solid #ccc; }}
+            button.filter-btn {{ background: var(--primary); color: white; border: none; cursor: pointer; font-weight: bold; }}
 
-            .grid {{ display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 1rem; }}
-            .gallery-item {{ background: var(--card); border-radius: 8px; overflow: hidden; box-shadow: 0 2px 4px rgb(0 0 0 / 0.1); transition: transform 0.2s; }}
+            .grid {{ display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 1rem; }}
+            .gallery-item {{ background: var(--card); border-radius: 8px; overflow: hidden; box-shadow: 0 2px 4px rgb(0 0 0 / 0.1); transition: transform 0.2s; position: relative; display: flex; flex-direction: column; }}
             .gallery-item:hover {{ transform: translateY(-4px); }}
-            .gallery-item img {{ width: 100%; height: auto; display: block; }}
-            .meta {{ padding: 0.5rem; font-size: 0.8rem; text-align: center; color: #475569; }}
+            .gallery-item img {{ width: 100%; height: auto; display: block; aspect-ratio: 1/1; object-fit: cover; }}
+            .meta {{ padding: 0.75rem; font-size: 0.8rem; text-align: center; color: #475569; flex-grow: 1; display: flex; flex-direction: column; justify-content: space-between; }}
             .home-link {{ text-decoration: none; color: var(--primary); font-weight: bold; }}
+
+            /* Action Buttons Styling */
+            .actions {{
+                display: flex;
+                gap: 0.5rem;
+                margin-top: 0.75rem;
+            }}
+            .btn {{
+                flex: 1;
+                padding: 0.4rem;
+                font-size: 0.75rem;
+                border-radius: 4px;
+                text-align: center;
+                text-decoration: none;
+                color: white;
+                font-weight: bold;
+                border: none;
+                cursor: pointer;
+                transition: opacity 0.2s;
+            }}
+            .btn:hover {{ opacity: 0.7; }}
+
+            .download-btn {{ background-color: var(--primary); }}
+            .delete-btn {{ background-color: var(--danger); }}
+
         </style>
     </head>
     <body>
@@ -520,7 +568,7 @@ def gallery(
                 {mk_opt('ddpm', approach, 'DDPM')}
                 {mk_opt('ddim', approach, 'DDIM')}
             </select>
-            <button type="submit">Filter</button>
+            <button type="submit" class="filter-btn">Filter</button>
             <a href="/gallery" style="align-self:center; margin-left: auto; font-size: 0.9rem;">Reset</a>
         </form>
 
@@ -528,7 +576,35 @@ def gallery(
             {images_html}
         </div>
 
+
+
         { "<p style='text-align:center; color: #666;'>No images found matching these criteria.</p>" if not faces else "" }
+            <script>
+                async function deleteFace(faceId) {{
+                    if(!confirm("Are you sure you want to delete this image?")) return;
+
+                    try {{
+                        // The endpoint expects face_id as a query param
+                        const response = await fetch(`/gallery/${{faceId}}`, {{
+                            method: 'DELETE'
+                        }});
+
+                        if (response.ok) {{
+                            // Remove the element from the DOM smoothly
+                            const card = document.getElementById('card-' + faceId);
+                            if (card) {{
+                                card.style.opacity = '0';
+                                card.remove();
+                            }}
+                        }} else {{
+                            alert("Failed to delete the image.");
+                        }}
+                    }} catch (err) {{
+                        console.error(err);
+                        alert("An error occurred while deleting.");
+                    }}
+                }}
+            </script>
     </body>
     </html>
     """

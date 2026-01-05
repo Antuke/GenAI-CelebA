@@ -4,3 +4,4 @@ tqdm
 pillow
 numpy
 python-multipart
+redis

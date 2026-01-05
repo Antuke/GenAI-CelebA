@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   genai-celeba:
     build: .
@@ -16,8 +14,11 @@ services:
       - .:/app
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
     command: >
       /bin/bash -c "echo 'Server is starting... The first generation will take time to start! The application will be available at localhost:8000' && uvicorn entrypoint:app --port 8000 --host 0.0.0.0"
+
 
   redis:
     image: redis:8.4.0-alpine
